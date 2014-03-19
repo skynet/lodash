@@ -4,7 +4,10 @@
   var undefined;
 
   /** Used as the size to cover large array optimizations */
-  var LARGE_ARRAY_SIZE = 200;
+  var largeArraySize = 200;
+
+  /** Used as the maximum length an array-like object */
+  var maxSafeInteger = Math.pow(2, 53) - 1;
 
   /** Used as a reference to the global object */
   var root = typeof global == 'object' && global || this;
@@ -490,11 +493,8 @@
       function message(methodName) {
         return '`_.' + methodName + '` should avoid overwritten native methods';
       }
-      var object = { 'a': true };
-
-      var largeArray = _.times(LARGE_ARRAY_SIZE, function() {
-        return object;
-      });
+      var object = { 'a': true },
+          largeArray = _.times(largeArraySize, _.constant(object));
 
       if (lodashBizarro) {
         try {
@@ -626,7 +626,6 @@
         this.a = 1;
         this.c = 3;
       }
-
       Foo.prototype.b = 2;
       deepEqual(_.assign({}, new Foo), { 'a': 1, 'c': 3 });
     });
@@ -893,7 +892,6 @@
         this._b = 2;
         this.a = function() { return this._a; };
       }
-
       Foo.prototype.b = function() { return this._b; };
 
       var object = new Foo;
@@ -2026,7 +2024,6 @@
         this.a = 1;
         this.c = 3;
       }
-
       Foo.prototype.b = 2;
       deepEqual(_.defaults({ 'c': 2 }, new Foo), { 'a': 1, 'c': 2 });
     });
@@ -2190,8 +2187,8 @@
     });
 
     test('should work with large arrays', 1, function() {
-      var array1 = _.range(LARGE_ARRAY_SIZE + 1),
-          array2 = _.range(LARGE_ARRAY_SIZE),
+      var array1 = _.range(largeArraySize + 1),
+          array2 = _.range(largeArraySize),
           a = {},
           b = {},
           c = {};
@@ -2199,16 +2196,13 @@
       array1.push(a, b, c);
       array2.push(b, c, a);
 
-      deepEqual(_.difference(array1, array2), [LARGE_ARRAY_SIZE]);
+      deepEqual(_.difference(array1, array2), [largeArraySize]);
     });
 
     test('should work with large arrays of objects', 1, function() {
       var object1 = {},
-          object2 = {};
-
-      var largeArray = [object1].concat(_.times(LARGE_ARRAY_SIZE, function() {
-        return object2;
-      }));
+          object2 = {},
+          largeArray = [object1].concat(_.times(largeArraySize, _.constant(object2)));
 
       deepEqual(_.difference(largeArray, [object2]), [object1]);
     });
@@ -3216,7 +3210,7 @@
           stringObject = Object(stringLiteral),
           expected = [stringLiteral, stringObject];
 
-      var largeArray = _.times(LARGE_ARRAY_SIZE, function(count) {
+      var largeArray = _.times(largeArraySize, function(count) {
         return count % 2 ? stringObject : stringLiteral;
       });
 
@@ -3251,7 +3245,6 @@
         this.a = _.identity;
         this.b = 'b'
       }
-
       Foo.prototype.c = noop;
       deepEqual(_.functions(new Foo), ['a', 'c']);
     });
@@ -3477,6 +3470,8 @@
   QUnit.module('custom `_.indexOf` methods');
 
   (function() {
+    function Foo() {}
+
     function custom(array, value, fromIndex) {
       var index = (fromIndex || 0) - 1,
           length = array.length;
@@ -3489,13 +3484,10 @@
       }
       return -1;
     }
-
-    function Foo() {}
-
     var array = [1, new Foo, 3, new Foo],
         indexOf = _.indexOf;
 
-    var largeArray = _.times(LARGE_ARRAY_SIZE, function() {
+    var largeArray = _.times(largeArraySize, function() {
       return new Foo;
     });
 
@@ -3655,13 +3647,21 @@
 
     test('should work with large arrays of objects', 1, function() {
       var object = {},
-          expected = [object];
-
-      var largeArray = _.times(LARGE_ARRAY_SIZE, function() {
-        return object;
-      });
+          expected = [object],
+          largeArray = _.times(largeArraySize, _.constant(object));
 
       deepEqual(_.intersection(expected, largeArray), expected);
+    });
+
+    test('should work with large arrays of objects', 2, function() {
+      var object = {},
+          expected = [object],
+          largeArray = _.times(largeArraySize, _.constant(object));
+
+      deepEqual(_.intersection(expected, largeArray), expected);
+
+      expected = [1];
+      deepEqual(_.intersection(_.range(largeArraySize), null, expected), expected);
     });
 
     test('should return a wrapped value when chaining', 2, function() {
@@ -3971,6 +3971,43 @@
       strictEqual(_.isEmpty('a'), false);
     });
 
+    test('should work with an object that has a `length` property', 1, function() {
+      strictEqual(_.isEmpty({ 'length': 0 }), false);
+    });
+
+    test('should work with `arguments` objects (test in IE < 9)', 1, function() {
+      if (!isPhantomPage) {
+        strictEqual(_.isEmpty(args), false);
+      } else {
+        skipTest();
+      }
+    });
+
+    test('should work with jQuery/MooTools DOM query collections', 1, function() {
+      function Foo(elements) { push.apply(this, elements); }
+      Foo.prototype = { 'length': 0, 'splice': Array.prototype.splice };
+
+      strictEqual(_.isEmpty(new Foo([])), true);
+    });
+
+    test('should not treat objects with negative lengths as array-like', 1, function() {
+      function Foo() {}
+      Foo.prototype.length = -1;
+
+      strictEqual(_.isEmpty(new Foo), true);
+    });
+
+    test('should not treat objects with lengths larger than `maxSafeInteger` as array-like', 1, function() {
+      function Foo() {}
+      Foo.prototype.length = maxSafeInteger + 1;
+
+      strictEqual(_.isEmpty(new Foo), true);
+    });
+
+    test('should not treat objects with non-number lengths as array-like', 1, function() {
+      strictEqual(_.isEmpty({ 'length': '0' }), false);
+    });
+
     test('fixes the JScript [[DontEnum]] bug (test in IE < 9)', 1, function() {
       equal(_.isEmpty(shadowedObject), false);
     });
@@ -3982,25 +4019,6 @@
 
       Foo.prototype = { 'a': 1 };
       strictEqual(_.isEmpty(Foo), true);
-    });
-
-    test('should work with an object that has a `length` property', 1, function() {
-      strictEqual(_.isEmpty({ 'length': 0 }), false);
-    });
-
-    test('should work with jQuery/MooTools DOM query collections', 1, function() {
-      function Foo(elements) { push.apply(this, elements); }
-      Foo.prototype = { 'length': 0, 'splice': Array.prototype.splice };
-
-      strictEqual(_.isEmpty(new Foo([])), true);
-    });
-
-    test('should work with `arguments` objects (test in IE < 9)', 1, function() {
-      if (!isPhantomPage) {
-        strictEqual(_.isEmpty(args), false);
-      } else {
-        skipTest();
-      }
     });
 
     test('should return an unwrapped value when intuitively chaining', 1, function() {
@@ -4198,9 +4216,7 @@
     });
 
     test('should perform comparisons between object instances', 4, function() {
-      function Foo() {
-        this.value = 1;
-      }
+      function Foo() { this.value = 1; }
       Foo.prototype.value = 1;
 
       function Bar() {
@@ -6057,7 +6073,6 @@
     });
   }());
 
-
   /*--------------------------------------------------------------------------*/
 
   QUnit.module('lodash.pad');
@@ -7424,6 +7439,14 @@
       deepEqual(actual, expected);
     });
 
+    test('should work with `arguments` objects (test in IE < 9)', 1, function() {
+      if (!isPhantomPage) {
+        equal(_.size(args), 3);
+      } else {
+        skipTest();
+      }
+    });
+
     test('should work with jQuery/MooTools DOM query collections', 1, function() {
       function Foo(elements) { push.apply(this, elements); }
       Foo.prototype = { 'length': 0, 'splice': Array.prototype.splice };
@@ -7431,12 +7454,16 @@
       equal(_.size(new Foo(array)), 3);
     });
 
-    test('should work with `arguments` objects (test in IE < 9)', 1, function() {
-      if (!isPhantomPage) {
-        equal(_.size(args), 3);
-      } else {
-        skipTest();
-      }
+    test('should not treat objects with negative lengths as array-like', 1, function() {
+      strictEqual(_.size({ 'length': -1 }), 1);
+    });
+
+    test('should not treat objects with lengths larger than `maxSafeInteger` as array-like', 1, function() {
+      strictEqual(_.size({ 'length': maxSafeInteger + 1 }), 1);
+    });
+
+    test('should not treat objects with non-number lengths as array-like', 1, function() {
+      strictEqual(_.size({ 'length': '0' }), 1);
     });
 
     test('fixes the JScript [[DontEnum]] bug (test in IE < 9)', 1, function() {
@@ -8652,7 +8679,6 @@
         this.b = 2;
         this.c = 3;
       }
-
       var actual = _.transform(new Foo, function(result, value, key) {
         result[key] = value * value;
       });
@@ -8873,7 +8899,7 @@
     test('should work with large arrays', 1, function() {
       var object = {};
 
-      var largeArray = _.times(LARGE_ARRAY_SIZE, function(index) {
+      var largeArray = _.times(largeArraySize, function(index) {
         switch (index % 3) {
           case 0: return 0;
           case 1: return 'a';
@@ -8887,18 +8913,19 @@
     test('should work with large arrays of boolean, `null`, and `undefined` values', 1, function() {
       var array = [],
           expected = [true, false, null, undefined],
-          count = Math.ceil(LARGE_ARRAY_SIZE / expected.length);
+          count = Math.ceil(largeArraySize / expected.length);
 
       _.times(count, function() {
         push.apply(array, expected);
       });
+
       deepEqual(_.uniq(array), expected);
     });
 
     test('should distinguish between numbers and numeric strings', 1, function() {
       var array = [],
           expected = ['2', 2, Object('2'), Object(2)],
-          count = Math.ceil(LARGE_ARRAY_SIZE / expected.length);
+          count = Math.ceil(largeArraySize / expected.length);
 
       _.times(count, function() {
         push.apply(array, expected);
